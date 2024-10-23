@@ -1,6 +1,7 @@
 from flask import Flask, request, send_file
 import requests
 from ics import Calendar, Event
+from urllib.parse import quote as url_quote
 from datetime import datetime
 import io
 
