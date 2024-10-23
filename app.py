@@ -5,13 +5,23 @@ from ics import Calendar, Event
 from datetime import datetime
 import io
 import logging
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
 
-CLIENT_ID = 'YOUR_CLIENT_ID'
-CLIENT_SECRET = 'YOUR_CLIENT_SECRET'
+# Get credentials from environment variables
+CLIENT_ID = os.getenv('CLIENT_ID')
+CLIENT_SECRET = os.getenv('CLIENT_SECRET')
 REDIRECT_URI = 'https://backend-1-2x3i.onrender.com/oauth/callback'
+
+# Validate required environment variables
+if not CLIENT_ID or not CLIENT_SECRET:
+    logging.error("Missing required environment variables. Please check .env file")
+    raise ValueError("Missing required environment variables")
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
