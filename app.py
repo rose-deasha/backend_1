@@ -11,12 +11,20 @@ from dotenv import load_dotenv
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app)
+# Configure CORS to accept requests from your frontend domain
+CORS(app, resources={
+    r"/*": {
+        "origins": ["*"],  # For development. In production, specify your frontend URL
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"]
+    }
+})
 
 # Get credentials from environment variables
 CLIENT_ID = os.getenv('CLIENT_ID')
 CLIENT_SECRET = os.getenv('CLIENT_SECRET')
 REDIRECT_URI = 'https://backend-1-2x3i.onrender.com/oauth/callback'
+FRONTEND_URL = 'https://rose-deasha.github.io/eventbrite-to-ical/'
 
 # Validate required environment variables
 if not CLIENT_ID or not CLIENT_SECRET:
@@ -30,12 +38,11 @@ logging.basicConfig(level=logging.INFO)
 def oauth_callback():
     # Get the authorization code from the URL query parameter
     code = request.args.get('code')
-    
-    logging.info(f'Received callback with code: {code is not None}')
+    logging.info(f'Received callback with code present: {bool(code)}')
     
     if not code:
         logging.error('No authorization code received')
-        return jsonify({'error': 'Authorization code is missing'}), 400
+        return redirect(f'{FRONTEND_URL}?error=missing_code')
 
     # Exchange the authorization code for an access token
     token_url = 'https://www.eventbrite.com/oauth/token'
@@ -54,29 +61,25 @@ def oauth_callback():
         # Send POST request to Eventbrite to get the access token
         response = requests.post(token_url, data=data)
         token_data = response.json()
-        
-        # Log the token exchange response (excluding sensitive data)
         logging.info(f'Token exchange response status: {response.status_code}')
-        logging.info(f'Token exchange response contains access_token: {"access_token" in token_data}')
-
+        
         # Get the access token from the response
         access_token = token_data.get('access_token')
 
         if access_token:
             # Redirect to frontend with the access token
-            frontend_url = "YOUR_FRONTEND_URL"  # Replace with your frontend URL
-            return redirect(f'{frontend_url}?access_token={access_token}')
+            frontend_url = f'{https://rose-deasha.github.io/eventbrite-to-ical/}?access_token={access_token}'
+            logging.info(f'Redirecting to: {redirect_url}')
+            return redirect(redirect_url)
         else:
             # Log the error if authorization failed
-            error_description = token_data.get('error_description', 'Authorization failed')
+           error_description = token_data.get('error_description', 'Authorization failed')
             logging.error(f'Authorization failed: {error_description}')
-            return jsonify({
-                'error': 'Authorization failed',
-                'details': error_description
-            }), 400
+            return redirect(f'{FRONTEND_URL}?error={error_description}')
+            
     except Exception as e:
         logging.error(f'Exception during token exchange: {str(e)}')
-        return jsonify({'error': 'Server error during authorization'}), 500
+        return redirect(f'{FRONTEND_URL}?error=server_error')
 
 @app.route('/events')
 def get_user_events():
