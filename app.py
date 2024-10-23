@@ -1,11 +1,12 @@
 from flask import Flask, request, send_file
+from flask_cors import CORS  # Add this import
 import requests
 from ics import Calendar, Event
-from urllib.parse import quote as url_quote
 from datetime import datetime
 import io
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS
 
 @app.route('/create-ical', methods=['POST'])
 def create_ical():
