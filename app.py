@@ -1,4 +1,4 @@
-from flask import Flask, request, send_file, jsonify
+from flask import Flask, request, send_file, jsonify, redirect
 from flask_cors import CORS
 import requests
 from ics import Calendar, Event
@@ -9,33 +9,103 @@ import logging
 app = Flask(__name__)
 CORS(app)
 
-# Set up logging to capture errors
-logging.basicConfig(level=logging.DEBUG)
+CLIENT_ID = 'YOUR_CLIENT_ID'
+CLIENT_SECRET = 'YOUR_CLIENT_SECRET'
+REDIRECT_URI = 'https://backend-1-2x3i.onrender.com/oauth/callback'
 
-@app.route('/create-ical', methods=['POST'])
-def create_ical():
-    try:
-        data = request.get_json()
-        if 'apiKey' not in data:
-            return jsonify({'error': 'API key missing'}), 400
-        
-        api_key = data.get('apiKey')
-        headers = {
-            'Authorization': f'Bearer {api_key}'
-        }
+# Set up logging
+logging.basicConfig(level=logging.INFO)
 
-        # Send request to Eventbrite API
-        response = requests.get('https://www.eventbriteapi.com/v3/users/me/events/', headers=headers)
-        
-        if response.status_code != 200:
-            return jsonify({'error': 'Failed to fetch events from Eventbrite'}), response.status_code
+@app.route('/oauth/callback')
+def oauth_callback():
+    # Get the authorization code from the URL query parameter
+    code = request.args.get('code')
+    
+    if not code:
+        return jsonify({'error': 'Authorization code is missing'}), 400
 
-        events_data = response.json()
+    # Exchange the authorization code for an access token
+    token_url = 'https://www.eventbrite.com/oauth/token'
+    data = {
+        'grant_type': 'authorization_code',
+        'client_id': CLIENT_ID,
+        'client_secret': CLIENT_SECRET,
+        'code': code,
+        'redirect_uri': REDIRECT_URI
+    }
 
-        # Create a new calendar
+    # Send POST request to Eventbrite to get the access token
+    response = requests.post(token_url, data=data)
+    token_data = response.json()
+
+    # Log the token exchange response for debugging
+    logging.info(f'Token exchange response: {token_data}')
+
+    # Get the access token from the response
+    access_token = token_data.get('access_token')
+
+    if access_token:
+        # Redirect to the events page, passing the access token in the query
+        return redirect(f'/events?access_token={access_token}')
+    else:
+        # Log the error if authorization failed
+        error_description = token_data.get('error_description', 'Authorization failed')
+        logging.error(f'Authorization failed: {error_description}')
+        return jsonify({'error': 'Authorization failed', 'details': error_description}), 400
+
+@app.route('/events')
+def get_user_events():
+    access_token = request.args.get('access_token')  # Access token passed via query parameter
+
+    if not access_token:
+        return jsonify({'error': 'Access token missing'}), 400
+
+    headers = {
+        'Authorization': f'Bearer {access_token}'
+    }
+
+    # Make request to Eventbrite API to get the user's events
+    response = requests.get('https://www.eventbriteapi.com/v3/users/me/events/', headers=headers)
+    
+    # Log the event fetching response for debugging
+    logging.info(f'Events fetch response: {response.status_code} {response.text}')
+
+    if response.status_code != 200:
+        return jsonify({'error': 'Failed to fetch events from Eventbrite', 'details': response.text}), response.status_code
+
+    events_data = response.json()
+
+    # Handle the response (return or process the events)
+    if 'events' in events_data:
+        return jsonify(events_data['events'])
+    else:
+        return jsonify({'error': 'No events found or API request failed'}), response.status_code
+
+@app.route('/events/ical')
+def download_ical():
+    access_token = request.args.get('access_token')
+
+    if not access_token:
+        return jsonify({'error': 'Access token missing'}), 400
+
+    headers = {
+        'Authorization': f'Bearer {access_token}'
+    }
+
+    response = requests.get('https://www.eventbriteapi.com/v3/users/me/events/', headers=headers)
+    
+    # Log the iCal event fetching response for debugging
+    logging.info(f'iCal fetch response: {response.status_code} {response.text}')
+
+    if response.status_code != 200:
+        return jsonify({'error': 'Failed to fetch events for iCal', 'details': response.text}), response.status_code
+
+    events_data = response.json()
+
+    if 'events' in events_data:
         calendar = Calendar()
 
-        for event in events_data.get('events', []):
+        for event in events_data['events']:
             start_time = datetime.strptime(event['start']['utc'], '%Y-%m-%dT%H:%M:%SZ')
             end_time = datetime.strptime(event['end']['utc'], '%Y-%m-%dT%H:%M:%SZ')
 
@@ -52,9 +122,7 @@ def create_ical():
         ical_file = io.StringIO(str(calendar))
         return send_file(io.BytesIO(ical_file.getvalue().encode()), as_attachment=True, download_name='eventbrite_events.ics', mimetype='text/calendar')
 
-    except Exception as e:
-        app.logger.error(f"Error occurred: {e}")
-        return jsonify({'error': 'Internal Server Error'}), 500
+    return jsonify({'error': 'No events found'}), 404
 
 if __name__ == '__main__':
     app.run(debug=True)
