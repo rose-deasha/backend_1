@@ -135,132 +135,129 @@ def download_ical():
             'Accept': 'application/json'
         }
 
+        # Get user's orders with expanded event details
+        logger.info("Fetching user's orders...")
+        response = requests.get(
+            'https://www.eventbriteapi.com/v3/users/me/orders/',
+            headers=headers,
+            params={
+                'expand': ['event', 'event.venue', 'attendees']
+            }
+        )
+
+        # Log the raw response for debugging
+        logger.info(f"Response status: {response.status_code}")
+        logger.info(f"Response content: {response.text[:1000]}")  # Log first 1000 chars
+
+        if response.status_code != 200:
+            return jsonify({
+                'error': 'Failed to fetch orders',
+                'details': response.text
+            }), response.status_code
+
+        data = response.json()
+        
         # Create calendar
         calendar = Calendar()
         calendar.creator = 'Eventbrite to iCal Converter'
 
-        # Initialize variables for pagination
-        continuation_token = None
-        all_orders = []
+        if not data.get('orders'):
+            logger.warning("No orders found in response")
+            return jsonify({'error': 'No orders found'}), 404
 
-        # Fetch all orders using pagination
-        while True:
-            params = {
-                'expand': 'event,event.venue,event.ticket_classes'
-            }
-            
-            if continuation_token:
-                params['continuation'] = continuation_token
+        # Debug log the number of orders
+        logger.info(f"Found {len(data['orders'])} orders")
 
-            # Get user's orders (events they're attending)
-            logger.info(f"Fetching orders page with params: {params}")
-            orders_response = requests.get(
-                'https://www.eventbriteapi.com/v3/users/me/orders/',
-                headers=headers,
-                params=params
-            )
-
-            logger.info(f"Orders API Response Status: {orders_response.status_code}")
-            
-            if orders_response.status_code != 200:
-                return jsonify({
-                    'error': 'Failed to fetch orders',
-                    'details': orders_response.text
-                }), orders_response.status_code
-
-            orders_data = orders_response.json()
-            
-            if orders_data.get('orders'):
-                all_orders.extend(orders_data['orders'])
-
-            # Check for pagination
-            pagination = orders_data.get('pagination', {})
-            continuation_token = pagination.get('continuation')
-            
-            if not continuation_token:
-                break
-
-        if not all_orders:
-            logger.info("No orders found")
-            return jsonify({'error': 'No tickets found'}), 404
-
-        logger.info(f"Total orders found: {len(all_orders)}")
-
-        # Process all orders
-        for order in all_orders:
+        # Process each order
+        for order in data['orders']:
             try:
+                # Log the entire order for debugging
+                logger.info(f"Processing order: {order.get('id')}")
+                logger.info(f"Order data: {order}")
+
+                # Get the event data
                 event = order.get('event')
                 if not event:
-                    logger.warning(f"No event data in order {order.get('id')}")
+                    logger.warning(f"No event data for order {order.get('id')}")
                     continue
 
-                logger.info(f"Processing event: {event.get('name', {}).get('text', 'Unknown Event')}")
-                logger.info(f"Event dates - Start: {event.get('start')}, End: {event.get('end')}")
+                # Log the event data
+                logger.info(f"Event data: {event}")
 
+                # Create the calendar event
                 ical_event = Event()
                 ical_event.name = event['name']['text']
-                
-                # Handle datetime conversion
-                try:
-                    ical_event.begin = datetime.strptime(event['start']['utc'], '%Y-%m-%dT%H:%M:%SZ')
-                    ical_event.end = datetime.strptime(event['end']['utc'], '%Y-%m-%dT%H:%M:%SZ')
-                except Exception as e:
-                    logger.error(f"Error parsing dates for event {event.get('id')}: {e}")
-                    continue
 
+                # Parse start date
+                start_str = event['start']['utc']
+                logger.info(f"Start date string: {start_str}")
+                ical_event.begin = datetime.strptime(start_str, '%Y-%m-%dT%H:%M:%SZ')
+
+                # Parse end date
+                end_str = event['end']['utc']
+                logger.info(f"End date string: {end_str}")
+                ical_event.end = datetime.strptime(end_str, '%Y-%m-%dT%H:%M:%SZ')
+
+                # Add the URL
                 ical_event.url = event.get('url', '')
 
-                # Add venue if available
+                # Add venue information
                 if event.get('venue'):
-                    venue_address = event['venue'].get('address', {})
+                    venue = event['venue']
+                    venue_address = venue.get('address', {})
                     address_parts = []
+                    
+                    # Add venue name if available
+                    if venue.get('name'):
+                        address_parts.append(venue['name'])
+                    
+                    # Add address components
                     for field in ['address_1', 'address_2', 'city', 'region', 'postal_code', 'country']:
                         if venue_address.get(field):
                             address_parts.append(venue_address[field])
                     
                     if address_parts:
-                        ical_event.location = ', '.join(address_parts)
+                        ical_event.location = ', '.join(filter(None, address_parts))
 
-                # Add description
+                # Add description with event and ticket details
                 description_parts = []
+                
+                # Add event description
                 if event.get('description', {}).get('text'):
                     description_parts.append(event['description']['text'])
 
                 # Add order information
-                description_parts.append("\nOrder Information:")
-                description_parts.append(f"Order #: {order.get('reference', 'N/A')}")
-                
-                # Add ticket information
-                attendees = order.get('attendees', [])
-                if attendees:
-                    description_parts.append("\nTicket Information:")
-                    for attendee in attendees:
-                        ticket_info = []
-                        if attendee.get('ticket_class_name'):
-                            ticket_info.append(f"Type: {attendee['ticket_class_name']}")
-                        if ticket_info:
-                            description_parts.append(" - " + ", ".join(ticket_info))
+                description_parts.append(f"\nOrder #: {order.get('reference', 'N/A')}")
 
+                # Add ticket information
+                if order.get('attendees'):
+                    description_parts.append("\nTickets:")
+                    for attendee in order['attendees']:
+                        if attendee.get('ticket_class_name'):
+                            description_parts.append(f"- {attendee['ticket_class_name']}")
+
+                # Add event URL
                 description_parts.append(f"\nEvent URL: {event.get('url', '')}")
+
                 ical_event.description = '\n'.join(description_parts)
 
+                # Add the event to the calendar
                 calendar.events.add(ical_event)
-                logger.info(f"Successfully added event to calendar: {ical_event.name}")
+                logger.info(f"Successfully added event: {ical_event.name} ({ical_event.begin} to {ical_event.end})")
 
             except Exception as e:
-                logger.error(f"Error processing order {order.get('id', 'unknown')}: {str(e)}")
+                logger.error(f"Error processing order: {str(e)}")
+                logger.error(traceback.format_exc())
                 continue
 
+        # Check if we added any events
         if not calendar.events:
             logger.warning("No events were successfully processed")
-            return jsonify({'error': 'No valid events found'}), 404
+            return jsonify({'error': 'No events found'}), 404
 
-        logger.info(f"Total events added to calendar: {len(calendar.events)}")
-
-        # Generate iCal file
+        # Generate the iCal file
         ical_file = io.StringIO(str(calendar))
-        logger.info("Successfully generated iCal file")
-
+        
         response = send_file(
             io.BytesIO(ical_file.getvalue().encode()),
             as_attachment=True,
