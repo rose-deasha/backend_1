@@ -108,31 +108,10 @@ def download_ical():
             'Content-Type': 'application/json'
         }
 
-        # First, get the user's ID
-        user_response = requests.get(
-            'https://www.eventbriteapi.com/v3/users/me/',
-            headers=headers
-        )
-        
-        logger.info(f"User API Response Status: {user_response.status_code}")
-        logger.info(f"User API Response: {user_response.text}")
-
-        if user_response.status_code != 200:
-            return jsonify({
-                'error': 'Failed to fetch user info',
-                'details': user_response.text
-            }), user_response.status_code
-
-        # Get events using the correct endpoint
+        # Fetch the user's events
         events_response = requests.get(
-            'https://www.eventbriteapi.com/v3/events/search/',
-            headers=headers,
-            params={
-                'user.id': user_response.json()['id'],
-                'expand': 'venue,ticket_availability',
-                'status': 'live,started,ended,completed',
-                'order_by': 'start_asc'
-            }
+            'https://www.eventbriteapi.com/v3/users/me/events/',
+            headers=headers
         )
 
         logger.info(f"Events API Response Status: {events_response.status_code}")
@@ -145,7 +124,7 @@ def download_ical():
             }), events_response.status_code
 
         events_data = events_response.json()
-        
+
         if not events_data.get('events'):
             logger.info("No events found in response")
             return jsonify({'error': 'No events found'}), 404
@@ -160,10 +139,10 @@ def download_ical():
                 ical_event.name = event['name']['text']
                 ical_event.begin = datetime.strptime(event['start']['utc'], '%Y-%m-%dT%H:%M:%SZ')
                 ical_event.end = datetime.strptime(event['end']['utc'], '%Y-%m-%dT%H:%M:%SZ')
-                
+
                 # Add event URL
                 ical_event.url = event.get('url', '')
-                
+
                 # Add venue if available
                 if event.get('venue'):
                     venue_address = event['venue'].get('address', {})
@@ -180,9 +159,9 @@ def download_ical():
                         address_parts.append(venue_address['postal_code'])
                     if venue_address.get('country'):
                         address_parts.append(venue_address['country'])
-                    
+
                     ical_event.location = ', '.join(filter(None, address_parts))
-                
+
                 # Add description
                 description_parts = []
                 if event.get('description', {}).get('text'):
@@ -191,22 +170,22 @@ def download_ical():
                     status = event['ticket_availability'].get('status', '').replace('_', ' ').title()
                     description_parts.append(f"\nTicket Status: {status}")
                 description_parts.append(f"\nEvent URL: {event.get('url', '')}")
-                
+
                 ical_event.description = '\n\n'.join(description_parts)
 
                 calendar.events.add(ical_event)
                 logger.info(f"Added event to calendar: {ical_event.name}")
-                
+
             except Exception as e:
                 logger.error(f"Error processing event {event.get('id', 'unknown')}: {str(e)}")
                 continue
 
         # Generate iCal file
         ical_file = io.StringIO(str(calendar))
-        
+
         # Log success
         logger.info("Successfully generated iCal file")
-        
+
         return send_file(
             io.BytesIO(ical_file.getvalue().encode()),
             as_attachment=True,
@@ -217,9 +196,10 @@ def download_ical():
     except Exception as e:
         logger.error(f"Error generating iCal: {traceback.format_exc()}")
         return jsonify({
-            'error': 'Failed to generate iCal file', 
+            'error': 'Failed to generate iCal file',
             'details': str(e)
         }), 500
+
 
 @app.errorhandler(404)
 def not_found_error(error):
