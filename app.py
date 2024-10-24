@@ -105,25 +105,9 @@ def download_ical():
 
         headers = {'Authorization': f'Bearer {access_token}'}
 
-        # Get user info
-        user_response = requests.get(
-            'https://www.eventbriteapi.com/v3/users/me/',
-            headers=headers
-        )
-
-        if user_response.status_code != 200:
-            logger.error(f"Failed to fetch user info: {user_response.text}")
-            return jsonify({
-                'error': 'Failed to fetch user info',
-                'details': user_response.text
-            }), user_response.status_code
-
-        user_data = user_response.json()
-        user_id = user_data['id']
-
-        # Get user's events
+        # Get user's events directly using the owned events endpoint
         events_response = requests.get(
-            f'https://www.eventbriteapi.com/v3/organizations/{user_id}/events/',
+            'https://www.eventbriteapi.com/v3/users/me/owned_events/',
             headers=headers
         )
 
@@ -148,6 +132,9 @@ def download_ical():
                 ical_event.begin = datetime.strptime(event['start']['utc'], '%Y-%m-%dT%H:%M:%SZ')
                 ical_event.end = datetime.strptime(event['end']['utc'], '%Y-%m-%dT%H:%M:%SZ')
                 
+                # Add URL to the event
+                ical_event.url = event.get('url', '')
+                
                 if event.get('venue'):
                     ical_event.location = event['venue'].get('address', {}).get('localized_address_display', 'No location')
                 
@@ -155,6 +142,7 @@ def download_ical():
                     ical_event.description = event['description']['text']
 
                 calendar.events.add(ical_event)
+                logger.info(f"Added event to calendar: {ical_event.name}")
                 
             except Exception as e:
                 logger.error(f"Error processing event {event.get('id', 'unknown')}: {str(e)}")
@@ -162,6 +150,10 @@ def download_ical():
 
         # Generate iCal file
         ical_file = io.StringIO(str(calendar))
+        
+        # Log success
+        logger.info("Successfully generated iCal file")
+        
         return send_file(
             io.BytesIO(ical_file.getvalue().encode()),
             as_attachment=True,
