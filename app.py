@@ -125,7 +125,8 @@ def download_ical():
 
         user_data = user_response.json()
 
-        logger.info(f"User ID: {user_data.get('id')}")
+        # Log the returned user information for debugging
+        logger.info(f"User Data: {user_data}")
 
         # Now fetch the user's events using the /users/me/events endpoint
         events_response = requests.get(
@@ -218,7 +219,7 @@ def download_ical():
             'error': 'Failed to generate iCal file',
             'details': str(e)
         }), 500
-
+        
 @app.errorhandler(404)
 def not_found_error(error):
     logger.error(f"404 error: {error}")
