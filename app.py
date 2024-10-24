@@ -108,64 +108,53 @@ def download_ical():
             'Content-Type': 'application/json'
         }
 
-        # Fetch the user's info using the /users/me endpoint
-        user_response = requests.get(
-            'https://www.eventbriteapi.com/v3/users/me/',
+        # Fetch the user's orders using the /users/me/orders endpoint
+        orders_response = requests.get(
+            'https://www.eventbriteapi.com/v3/users/me/orders/',
             headers=headers
         )
 
-        logger.info(f"User API Response Status: {user_response.status_code}")
-        logger.info(f"User API Response: {user_response.text}")
+        logger.info(f"Orders API Response Status: {orders_response.status_code}")
+        logger.info(f"Orders API Response: {orders_response.text}")
 
-        if user_response.status_code != 200:
+        if orders_response.status_code != 200:
             return jsonify({
-                'error': 'Failed to fetch user info',
-                'details': user_response.text
-            }), user_response.status_code
+                'error': 'Failed to fetch orders',
+                'details': orders_response.text
+            }), orders_response.status_code
 
-        user_data = user_response.json()
+        orders_data = orders_response.json()
 
-        # Log the returned user information for debugging
-        logger.info(f"User Data: {user_data}")
-
-        # Now fetch the user's events using the /users/me/events endpoint
-        events_response = requests.get(
-            'https://www.eventbriteapi.com/v3/users/me/events/',
-            headers=headers
-        )
-
-        logger.info(f"Events API Response Status: {events_response.status_code}")
-        logger.info(f"Events API Response: {events_response.text}")
-
-        if events_response.status_code != 200:
-            return jsonify({
-                'error': 'Failed to fetch events',
-                'details': events_response.text
-            }), events_response.status_code
-
-        events_data = events_response.json()
-
-        if not events_data.get('events'):
-            logger.info("No events found in response")
-            return jsonify({'error': 'No events found'}), 404
+        if not orders_data.get('orders'):
+            logger.info("No orders found in response")
+            return jsonify({'error': 'No orders found'}), 404
 
         # Create calendar
         calendar = Calendar()
         calendar.creator = 'Eventbrite to iCal Converter'
 
-        for event in events_data['events']:
+        for order in orders_data['orders']:
             try:
+                # Fetch event details for each order
+                event_id = order['event_id']
+                event_response = requests.get(
+                    f'https://www.eventbriteapi.com/v3/events/{event_id}/',
+                    headers=headers
+                )
+
+                event_data = event_response.json()
+
                 ical_event = Event()
-                ical_event.name = event['name']['text']
-                ical_event.begin = datetime.strptime(event['start']['utc'], '%Y-%m-%dT%H:%M:%SZ')
-                ical_event.end = datetime.strptime(event['end']['utc'], '%Y-%m-%dT%H:%M:%SZ')
+                ical_event.name = event_data['name']['text']
+                ical_event.begin = datetime.strptime(event_data['start']['utc'], '%Y-%m-%dT%H:%M:%SZ')
+                ical_event.end = datetime.strptime(event_data['end']['utc'], '%Y-%m-%dT%H:%M:%SZ')
 
                 # Add event URL
-                ical_event.url = event.get('url', '')
+                ical_event.url = event_data.get('url', '')
 
                 # Add venue if available
-                if event.get('venue'):
-                    venue_address = event['venue'].get('address', {})
+                if event_data.get('venue'):
+                    venue_address = event_data['venue'].get('address', {})
                     address_parts = []
                     if venue_address.get('address_1'):
                         address_parts.append(venue_address['address_1'])
@@ -184,20 +173,16 @@ def download_ical():
 
                 # Add description
                 description_parts = []
-                if event.get('description', {}).get('text'):
-                    description_parts.append(event['description']['text'])
-                if event.get('ticket_availability'):
-                    status = event['ticket_availability'].get('status', '').replace('_', ' ').title()
-                    description_parts.append(f"\nTicket Status: {status}")
-                description_parts.append(f"\nEvent URL: {event.get('url', '')}")
-
+                if event_data.get('description', {}).get('text'):
+                    description_parts.append(event_data['description']['text'])
+                description_parts.append(f"\nEvent URL: {event_data.get('url', '')}")
                 ical_event.description = '\n\n'.join(description_parts)
 
                 calendar.events.add(ical_event)
                 logger.info(f"Added event to calendar: {ical_event.name}")
 
             except Exception as e:
-                logger.error(f"Error processing event {event.get('id', 'unknown')}: {str(e)}")
+                logger.error(f"Error processing order {order.get('id', 'unknown')}: {str(e)}")
                 continue
 
         # Generate iCal file
@@ -209,7 +194,7 @@ def download_ical():
         return send_file(
             io.BytesIO(ical_file.getvalue().encode()),
             as_attachment=True,
-            download_name='eventbrite_events.ics',
+            download_name='eventbrite_orders.ics',
             mimetype='text/calendar'
         )
 
@@ -219,6 +204,7 @@ def download_ical():
             'error': 'Failed to generate iCal file',
             'details': str(e)
         }), 500
+
         
 @app.errorhandler(404)
 def not_found_error(error):
