@@ -14,7 +14,7 @@ load_dotenv()
 
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins=[FRONTEND_URL])
 
 # Configure logging
 logging.basicConfig(
