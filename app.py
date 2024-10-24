@@ -103,13 +103,25 @@ def download_ical():
         if not access_token:
             return jsonify({'error': 'Access token missing'}), 400
 
-        headers = {'Authorization': f'Bearer {access_token}'}
+        headers = {
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        }
 
-        # Get user's events directly using the owned events endpoint
+        # Use the event search endpoint
         events_response = requests.get(
-            'https://www.eventbriteapi.com/v3/users/me/owned_events/',
-            headers=headers
+            'https://www.eventbriteapi.com/v3/organizations/me/events/',
+            headers=headers,
+            params={
+                'expand': 'venue,ticket_availability,organizer',
+                'status': 'live,started,ended,completed',
+                'order_by': 'start_asc'
+            }
         )
+
+        # Log the complete response for debugging
+        logger.info(f"API Response Status: {events_response.status_code}")
+        logger.info(f"API Response: {events_response.text}")
 
         if events_response.status_code != 200:
             logger.error(f"Failed to fetch events: {events_response.text}")
@@ -121,10 +133,13 @@ def download_ical():
         events_data = events_response.json()
         
         if not events_data.get('events'):
+            logger.info("No events found in response")
             return jsonify({'error': 'No events found'}), 404
 
         # Create calendar
         calendar = Calendar()
+        calendar.creator = 'Eventbrite to iCal Converter'
+
         for event in events_data['events']:
             try:
                 ical_event = Event()
@@ -135,11 +150,34 @@ def download_ical():
                 # Add URL to the event
                 ical_event.url = event.get('url', '')
                 
+                # Add venue if available
                 if event.get('venue'):
-                    ical_event.location = event['venue'].get('address', {}).get('localized_address_display', 'No location')
+                    venue_address = event['venue'].get('address', {})
+                    address_parts = []
+                    if venue_address.get('address_1'):
+                        address_parts.append(venue_address['address_1'])
+                    if venue_address.get('address_2'):
+                        address_parts.append(venue_address['address_2'])
+                    if venue_address.get('city'):
+                        address_parts.append(venue_address['city'])
+                    if venue_address.get('region'):
+                        address_parts.append(venue_address['region'])
+                    if venue_address.get('postal_code'):
+                        address_parts.append(venue_address['postal_code'])
+                    if venue_address.get('country'):
+                        address_parts.append(venue_address['country'])
+                    
+                    ical_event.location = ', '.join(filter(None, address_parts))
                 
-                if event.get('description'):
-                    ical_event.description = event['description']['text']
+                # Add description
+                description_parts = []
+                if event.get('description', {}).get('text'):
+                    description_parts.append(event['description']['text'])
+                if event.get('ticket_availability'):
+                    status = event['ticket_availability'].get('status', '').replace('_', ' ').title()
+                    description_parts.append(f"\nTicket Status: {status}")
+                
+                ical_event.description = '\n\n'.join(description_parts)
 
                 calendar.events.add(ical_event)
                 logger.info(f"Added event to calendar: {ical_event.name}")
@@ -163,7 +201,10 @@ def download_ical():
 
     except Exception as e:
         logger.error(f"Error generating iCal: {traceback.format_exc()}")
-        return jsonify({'error': 'Failed to generate iCal file'}), 500
+        return jsonify({
+            'error': 'Failed to generate iCal file', 
+            'details': str(e)
+        }), 500
 
 @app.errorhandler(404)
 def not_found_error(error):
