@@ -7,20 +7,23 @@ import io
 import logging
 import os
 from dotenv import load_dotenv
+import traceback
 
+# Load environment variables
 load_dotenv()
 
+# Initialize Flask app
 app = Flask(__name__)
-# Configure CORS to accept requests from your frontend domain
-CORS(app, resources={
-    r"/*": {
-        "origins": ["*"],  # For development. In production, specify your frontend URL
-        "methods": ["GET", "POST", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization"]
-    }
-})
+CORS(app)
 
-# Get credentials from environment variables
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Configuration
 CLIENT_ID = os.getenv('CLIENT_ID')
 CLIENT_SECRET = os.getenv('CLIENT_SECRET')
 REDIRECT_URI = 'https://backend-1-2x3i.onrender.com/oauth/callback'
@@ -28,174 +31,136 @@ FRONTEND_URL = 'https://rose-deasha.github.io/eventbrite-to-ical/'
 
 # Validate required environment variables
 if not CLIENT_ID or not CLIENT_SECRET:
-    logging.error("Missing required environment variables. Please check .env file")
+    logger.error("Missing required environment variables. Please check .env file")
     raise ValueError("Missing required environment variables")
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
+@app.route('/')
+def index():
+    """Health check endpoint"""
+    try:
+        return jsonify({
+            "status": "ok",
+            "client_id_configured": bool(CLIENT_ID),
+            "client_secret_configured": bool(CLIENT_SECRET)
+        })
+    except Exception as e:
+        logger.error(f"Error in index route: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @app.route('/oauth/callback')
 def oauth_callback():
-    # Get the authorization code from the URL query parameter
-    code = request.args.get('code')
-    logging.info(f'Received callback with code present: {bool(code)}')
-    
-    if not code:
-        logging.error('No authorization code received')
-        return redirect(f'{FRONTEND_URL}?error=missing_code')
-
-    # Exchange the authorization code for an access token
-    token_url = 'https://www.eventbrite.com/oauth/token'
-    data = {
-        'grant_type': 'authorization_code',
-        'client_id': CLIENT_ID,
-        'client_secret': CLIENT_SECRET,
-        'code': code,
-        'redirect_uri': REDIRECT_URI
-    }
-
-    # Log the token request data (excluding secret)
-    logging.info(f'Requesting token with client_id: {CLIENT_ID} and redirect_uri: {REDIRECT_URI}')
-
+    """Handle OAuth callback from Eventbrite"""
     try:
-        # Send POST request to Eventbrite to get the access token
-        response = requests.post(token_url, data=data)
-        token_data = response.json()
-        logging.info(f'Token exchange response status: {response.status_code}')
+        logger.info("Received callback request")
+        logger.info(f"Query parameters: {request.args}")
         
-        # Get the access token from the response
+        # Get authorization code
+        code = request.args.get('code')
+        if not code:
+            logger.error("No authorization code received")
+            return redirect(f"{FRONTEND_URL}?error=missing_code")
+
+        logger.info(f"Received authorization code: {code[:5]}...")
+
+        # Exchange code for token
+        token_url = 'https://www.eventbrite.com/oauth/token'
+        data = {
+            'grant_type': 'authorization_code',
+            'client_id': CLIENT_ID,
+            'client_secret': CLIENT_SECRET,
+            'code': code,
+            'redirect_uri': REDIRECT_URI
+        }
+
+        logger.info(f"Requesting token from {token_url}")
+        response = requests.post(token_url, data=data)
+        logger.info(f"Token response status: {response.status_code}")
+
+        if response.status_code != 200:
+            error_message = response.text
+            logger.error(f"Token exchange failed: {error_message}")
+            return redirect(f"{FRONTEND_URL}?error=token_exchange_failed")
+
+        token_data = response.json()
         access_token = token_data.get('access_token')
 
-        if access_token:
-            # Redirect to frontend with the access token
-            frontend_url = f'{https://rose-deasha.github.io/eventbrite-to-ical/}?access_token={access_token}'
-            logging.info(f'Redirecting to: {redirect_url}')
-            return redirect(redirect_url)
-        else:
-            # Log the error if authorization failed
-           error_description = token_data.get('error_description', 'Authorization failed')
-           logging.error(f'Authorization failed: {error_description}')
-           return redirect(f'{FRONTEND_URL}?error={error_description}')
-            
+        if not access_token:
+            logger.error("No access token in response")
+            return redirect(f"{FRONTEND_URL}?error=no_access_token")
+
+        logger.info("Successfully obtained access token")
+        return redirect(f"{FRONTEND_URL}?access_token={access_token}")
+
     except Exception as e:
-        logging.error(f'Exception during token exchange: {str(e)}')
-        return redirect(f'{FRONTEND_URL}?error=server_error')
-
-@app.route('/events')
-def get_user_events():
-    access_token = request.args.get('access_token')  # Access token passed via query parameter
-
-    if not access_token:
-        return jsonify({'error': 'Access token missing'}), 400
-
-    headers = {
-        'Authorization': f'Bearer {access_token}'
-    }
-
-     # First, get the user's ID
-    user_response = requests.get(
-        'https://www.eventbriteapi.com/v3/users/me/',
-        headers=headers
-    )
-    
-    # Log the user response for debugging
-    logging.info(f'User fetch response: {user_response.status_code} {user_response.text}')
-
-    if user_response.status_code != 200:
-        return jsonify({
-            'error': 'Failed to fetch user info from Eventbrite',
-            'details': user_response.text
-        }), user_response.status_code
-
-    user_data = user_response.json()
-    user_id = user_data['id']
-
-    # Then get the user's events using their ID
-    events_response = requests.get(
-        f'https://www.eventbriteapi.com/v3/organizations/{user_id}/events/',
-        headers=headers
-    )
-    
-    # Log the event fetching response for debugging
-    logging.info(f'Events fetch response: {events_response.status_code} {events_response.text}')
-
-    if events_response.status_code != 200:
-        return jsonify({
-            'error': 'Failed to fetch events from Eventbrite',
-            'details': events_response.text
-        }), events_response.status_code
-
-    events_data = events_response.json()
-
-    return jsonify(events_data.get('events', []))
+        logger.error(f"Unexpected error in callback: {traceback.format_exc()}")
+        return redirect(f"{FRONTEND_URL}?error=server_error")
 
 @app.route('/events/ical')
 def download_ical():
-    access_token = request.args.get('access_token')
+    """Generate and download iCal file for user's events"""
+    try:
+        access_token = request.args.get('access_token')
+        if not access_token:
+            return jsonify({'error': 'Access token missing'}), 400
 
-    if not access_token:
-        return jsonify({'error': 'Access token missing'}), 400
+        headers = {'Authorization': f'Bearer {access_token}'}
 
-    headers = {
-        'Authorization': f'Bearer {access_token}'
-    }
+        # Get user info
+        user_response = requests.get(
+            'https://www.eventbriteapi.com/v3/users/me/',
+            headers=headers
+        )
 
-   # First, get the user's ID
-    user_response = requests.get(
-        'https://www.eventbriteapi.com/v3/users/me/',
-        headers=headers
-    )
+        if user_response.status_code != 200:
+            logger.error(f"Failed to fetch user info: {user_response.text}")
+            return jsonify({
+                'error': 'Failed to fetch user info',
+                'details': user_response.text
+            }), user_response.status_code
 
-    if user_response.status_code != 200:
-        return jsonify({
-            'error': 'Failed to fetch user info',
-            'details': user_response.text
-        }), user_response.status_code
+        user_data = user_response.json()
+        user_id = user_data['id']
 
-    user_data = user_response.json()
-    user_id = user_data['id']
+        # Get user's events
+        events_response = requests.get(
+            f'https://www.eventbriteapi.com/v3/organizations/{user_id}/events/',
+            headers=headers
+        )
 
-    # Then get the user's events
-    events_response = requests.get(
-        f'https://www.eventbriteapi.com/v3/organizations/{user_id}/events/',
-        headers=headers
-    )
+        if events_response.status_code != 200:
+            logger.error(f"Failed to fetch events: {events_response.text}")
+            return jsonify({
+                'error': 'Failed to fetch events',
+                'details': events_response.text
+            }), events_response.status_code
 
-    if events_response.status_code != 200:
-        return jsonify({
-            'error': 'Failed to fetch events',
-            'details': events_response.text
-        }), events_response.status_code
+        events_data = events_response.json()
+        
+        if not events_data.get('events'):
+            return jsonify({'error': 'No events found'}), 404
 
-    events_data = events_response.json()
-
-    if 'events' in events_data:
+        # Create calendar
         calendar = Calendar()
-
         for event in events_data['events']:
             try:
-                start_time = datetime.strptime(event['start']['utc'], '%Y-%m-%dT%H:%M:%SZ')
-                end_time = datetime.strptime(event['end']['utc'], '%Y-%m-%dT%H:%M:%SZ')
-
                 ical_event = Event()
                 ical_event.name = event['name']['text']
-                ical_event.begin = start_time
-                ical_event.end = end_time
+                ical_event.begin = datetime.strptime(event['start']['utc'], '%Y-%m-%dT%H:%M:%SZ')
+                ical_event.end = datetime.strptime(event['end']['utc'], '%Y-%m-%dT%H:%M:%SZ')
                 
-                # Only add venue if it exists
-                if 'venue' in event and event['venue']:
+                if event.get('venue'):
                     ical_event.location = event['venue'].get('address', {}).get('localized_address_display', 'No location')
                 
-                # Only add description if it exists
-                if 'description' in event and event['description']:
-                    ical_event.description = event['description'].get('text', '')
+                if event.get('description'):
+                    ical_event.description = event['description']['text']
 
                 calendar.events.add(ical_event)
+                
             except Exception as e:
-                logging.error(f"Error processing event {event.get('id', 'unknown')}: {str(e)}")
+                logger.error(f"Error processing event {event.get('id', 'unknown')}: {str(e)}")
                 continue
 
-        # Generate iCal file in memory
+        # Generate iCal file
         ical_file = io.StringIO(str(calendar))
         return send_file(
             io.BytesIO(ical_file.getvalue().encode()),
@@ -204,7 +169,25 @@ def download_ical():
             mimetype='text/calendar'
         )
 
-    return jsonify({'error': 'No events found'}), 404
+    except Exception as e:
+        logger.error(f"Error generating iCal: {traceback.format_exc()}")
+        return jsonify({'error': 'Failed to generate iCal file'}), 500
+
+@app.errorhandler(404)
+def not_found_error(error):
+    logger.error(f"404 error: {error}")
+    return jsonify({"error": "Not found"}), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    logger.error(f"500 error: {error}")
+    return jsonify({"error": "Internal server error"}), 500
 
 if __name__ == '__main__':
+    logger.info("Starting application")
+    logger.info(f"CLIENT_ID configured: {bool(CLIENT_ID)}")
+    logger.info(f"CLIENT_SECRET configured: {bool(CLIENT_SECRET)}")
+    logger.info(f"REDIRECT_URI: {REDIRECT_URI}")
+    logger.info(f"FRONTEND_URL: {FRONTEND_URL}")
+    
     app.run(debug=True)
