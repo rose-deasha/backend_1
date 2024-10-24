@@ -74,8 +74,8 @@ def oauth_callback():
         else:
             # Log the error if authorization failed
            error_description = token_data.get('error_description', 'Authorization failed')
-            logging.error(f'Authorization failed: {error_description}')
-            return redirect(f'{FRONTEND_URL}?error={error_description}')
+           logging.error(f'Authorization failed: {error_description}')
+           return redirect(f'{FRONTEND_URL}?error={error_description}')
             
     except Exception as e:
         logging.error(f'Exception during token exchange: {str(e)}')
