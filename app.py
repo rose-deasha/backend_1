@@ -64,12 +64,63 @@ def fetch_all_orders(access_token):
         pagination = data.get('pagination', {})
         if not pagination.get('has_more_items'):
             break
-
+            
         # Move to the next page
         page += 1
 
     return orders
 
+@app.route('/oauth/callback')
+def oauth_callback():
+    """Handle the OAuth callback from Eventbrite"""
+    try:
+        # Get the authorization code from the URL query parameter
+        code = request.args.get('code')
+        state = request.args.get('state')
+        
+        logger.info(f"Received callback with code: {code[:5]}... and state: {state}")
+        
+        if not code:
+            logger.error("No authorization code received")
+            return redirect(f"{FRONTEND_URL}?error=missing_code")
+
+        # Exchange the authorization code for an access token
+        token_url = 'https://www.eventbrite.com/oauth/token'
+        data = {
+            'grant_type': 'authorization_code',
+            'client_id': CLIENT_ID,
+            'client_secret': CLIENT_SECRET,
+            'code': code,
+            'redirect_uri': REDIRECT_URI
+        }
+
+        logger.info(f"Exchanging code for token with client_id: {CLIENT_ID}")
+        logger.info(f"Redirect URI: {REDIRECT_URI}")
+
+        # Send POST request to Eventbrite to get the access token
+        response = requests.post(token_url, data=data)
+        logger.info(f"Token exchange response status: {response.status_code}")
+
+        if response.status_code != 200:
+            error_info = response.json() if response.text else {"error": "Unknown error"}
+            logger.error(f"Token exchange failed: {error_info}")
+            return redirect(f"{FRONTEND_URL}?error=token_exchange_failed")
+
+        # Get the access token from the response
+        token_data = response.json()
+        access_token = token_data.get('access_token')
+
+        if not access_token:
+            logger.error("No access token in response")
+            return redirect(f"{FRONTEND_URL}?error=no_access_token")
+
+        # Redirect back to frontend with the access token
+        logger.info("Successfully obtained access token, redirecting to frontend")
+        return redirect(f"{FRONTEND_URL}?access_token={access_token}")
+
+    except Exception as e:
+        logger.error(f"Error in OAuth callback: {traceback.format_exc()}")
+        return redirect(f"{FRONTEND_URL}?error=server_error&message={str(e)}")
 
 @app.route('/events/ical')
 def download_ical():
