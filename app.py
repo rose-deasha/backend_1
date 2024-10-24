@@ -14,7 +14,7 @@ load_dotenv()
 
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app, origins=[FRONTEND_URL])
+CORS(app, origins=[https://rose-deasha.github.io/eventbrite-to-ical/])
 
 # Configure logging
 logging.basicConfig(
