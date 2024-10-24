@@ -108,7 +108,26 @@ def download_ical():
             'Content-Type': 'application/json'
         }
 
-        # Fetch the user's events
+        # Fetch the user's info using the /users/me endpoint
+        user_response = requests.get(
+            'https://www.eventbriteapi.com/v3/users/me/',
+            headers=headers
+        )
+
+        logger.info(f"User API Response Status: {user_response.status_code}")
+        logger.info(f"User API Response: {user_response.text}")
+
+        if user_response.status_code != 200:
+            return jsonify({
+                'error': 'Failed to fetch user info',
+                'details': user_response.text
+            }), user_response.status_code
+
+        user_data = user_response.json()
+
+        logger.info(f"User ID: {user_data.get('id')}")
+
+        # Now fetch the user's events using the /users/me/events endpoint
         events_response = requests.get(
             'https://www.eventbriteapi.com/v3/users/me/events/',
             headers=headers
@@ -199,7 +218,6 @@ def download_ical():
             'error': 'Failed to generate iCal file',
             'details': str(e)
         }), 500
-
 
 @app.errorhandler(404)
 def not_found_error(error):
