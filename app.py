@@ -108,23 +108,37 @@ def download_ical():
             'Content-Type': 'application/json'
         }
 
-        # Use the event search endpoint
+        # First, get the user's ID
+        user_response = requests.get(
+            'https://www.eventbriteapi.com/v3/users/me/',
+            headers=headers
+        )
+        
+        logger.info(f"User API Response Status: {user_response.status_code}")
+        logger.info(f"User API Response: {user_response.text}")
+
+        if user_response.status_code != 200:
+            return jsonify({
+                'error': 'Failed to fetch user info',
+                'details': user_response.text
+            }), user_response.status_code
+
+        # Get events using the correct endpoint
         events_response = requests.get(
-            'https://www.eventbriteapi.com/v3/organizations/me/events/',
+            'https://www.eventbriteapi.com/v3/events/search/',
             headers=headers,
             params={
-                'expand': 'venue,ticket_availability,organizer',
+                'user.id': user_response.json()['id'],
+                'expand': 'venue,ticket_availability',
                 'status': 'live,started,ended,completed',
                 'order_by': 'start_asc'
             }
         )
 
-        # Log the complete response for debugging
-        logger.info(f"API Response Status: {events_response.status_code}")
-        logger.info(f"API Response: {events_response.text}")
+        logger.info(f"Events API Response Status: {events_response.status_code}")
+        logger.info(f"Events API Response: {events_response.text}")
 
         if events_response.status_code != 200:
-            logger.error(f"Failed to fetch events: {events_response.text}")
             return jsonify({
                 'error': 'Failed to fetch events',
                 'details': events_response.text
@@ -147,7 +161,7 @@ def download_ical():
                 ical_event.begin = datetime.strptime(event['start']['utc'], '%Y-%m-%dT%H:%M:%SZ')
                 ical_event.end = datetime.strptime(event['end']['utc'], '%Y-%m-%dT%H:%M:%SZ')
                 
-                # Add URL to the event
+                # Add event URL
                 ical_event.url = event.get('url', '')
                 
                 # Add venue if available
@@ -176,6 +190,7 @@ def download_ical():
                 if event.get('ticket_availability'):
                     status = event['ticket_availability'].get('status', '').replace('_', ' ').title()
                     description_parts.append(f"\nTicket Status: {status}")
+                description_parts.append(f"\nEvent URL: {event.get('url', '')}")
                 
                 ical_event.description = '\n\n'.join(description_parts)
 
